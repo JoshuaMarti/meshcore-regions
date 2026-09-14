@@ -1,4 +1,4 @@
-/* PNW Repeater Zone Selector — styled to match the /config wizard and docs. */
+/* Intermountain West Repeater Zone Selector — styled to match the /config wizard. */
 
 :root {
   --green:       #2d6a4f;
@@ -244,6 +244,18 @@ pre.commands { background: var(--blue); color: #d4eee5; font-family: "SF Mono","
 
 .muted { color: var(--text-muted); }
 .hidden { display: none !important; }
+
+/* ── Panel footer / attribution ─────────────────── */
+.panel-footer {
+  margin-top: 1.5rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.panel-footer a { color: var(--green-mid); }
+.panel-footer #brandCoverage { font-weight: 600; }
 
 @media (max-width: 720px) {
   .app-shell { grid-template-columns: 1fr; height: auto; }

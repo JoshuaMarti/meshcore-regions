@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0-draft",
+  "version": "0.2.0",
 
   "meta": {
     "_comment": "Every region-specific input for the tools lives in this file. Adapted from Adam Gessaman's Pacific Northwest MeshCore Regions (https://gessaman.com/) for the Intermountain West mesh, with permission.",
@@ -10,8 +10,17 @@
     "tagline": "Search an address or click the map, pick a repeater type, and get ready-to-paste region commands.",
     "coverage": "Covers ID, UT, and surrounding areas",
     "attribution": { "label": "Adam Gessaman", "url": "https://gessaman.com/" },
-    "outOfAreaKm": 450,
+
+    "polygons": {
+      "_comment": "Region extent is a polygon layer, not weighted-Voronoi seeds. `extentTag` is the in-area mask and is never returned as a primary. See shared/polygon-resolver.js.",
+      "file": "regions.geo.json",
+      "tagProperty": "region",
+      "extentTag": "imw"
+    },
     "snapKm": 50,
+    "overlapKm": 12,
+    "outOfAreaKm": 450,
+
     "geocoderCountryCodes": "us",
     "geocoderContact": "JoshKI7NOX@uvars.org",
     "map": {
@@ -21,7 +30,7 @@
   },
 
   "hierarchy": {
-    "_comment_hierarchy": "Parent chain is administrative only — it shapes the region put/def commands and the ancestry a node carries. Region scopes are matched per-tag in firmware, so the tree is for human legibility, not propagation.",
+    "_comment_hierarchy": "Parent chain is administrative only — it shapes the region put/def commands and the ancestry a node carries. Region scopes are matched per-tag in firmware, so the tree is for human legibility, not propagation. Tags with no polygon in regions.geo.json (us, west, pnw, inw, erc) are never resolution results; they are carried via crossBorderRules or optionalTags.",
 
     "us":     { "label": "United States",          "parent": null },
     "west":   { "label": "Western United States",  "parent": "us" },
@@ -38,7 +47,7 @@
     "smn":    { "label": "Lemhi County",           "parent": "e-id" },
 
     "n-id":   { "label": "Northern Idaho",         "parent": "id" },
-    "lws":    { "label": "Lewiston / Moscow",      "parent": "n-id" },
+    "lws":    { "label": "Lewiston / Clearwater / Grangeville", "parent": "n-id" },
     "cda":    { "label": "Coeur d'Alene",          "parent": "n-id" },
 
     "s-id":   { "label": "Southern Idaho",         "parent": "id" },
@@ -67,16 +76,18 @@
     "wy":     { "label": "Wyoming",                "parent": "imw" },
     "mt":     { "label": "Montana",                "parent": "imw" },
 
-    "inw":    { "label": "Inland Northwest",       "parent": "imw" }
+    "inw":    { "label": "Inland Northwest",       "parent": "imw" },
+
+    "erc":    {
+      "_comment": "Root-level by design: an affinity overlay, not a place. Has no polygon and is never a resolution result — it is added only when the operator opts in via optionalTags.",
+      "label": "Emergency Response Communications",
+      "parent": null
+    }
   },
-
-  "seeds": [],
-
-  "_comment_seeds": "PENDING. Region extent is being defined as polygons in GIS rather than weighted-Voronoi seeds; see the polygon resolver work. The tools will not run against this file until either seeds or a polygon layer is present — rankSeeds over an empty array leaves pool[0] undefined.",
 
   "borders": [
     {
-      "_comment": "Polyline as [lon, lat] sorted ascending by lon; border(lon) is the latitude of the line at that longitude. A point with lat above border(lon) is on the 'north' side. mode 'hard' filters seeds to the point's own side; mode 'soft' only feeds crossBorderRules. The ID/UT line is a clean function of longitude (42 deg N from the NV corner to the WY corner), so it expresses exactly. NOTE: no rule below currently reads stateOrProvince — this is here so a future state-gated rule has something to classify against.",
+      "_comment": "Polyline as [lon, lat] sorted ascending by lon; border(lon) is the latitude of the line at that longitude. A point with lat above border(lon) is on the 'north' side. mode 'hard' restricts resolution to the point's own side; mode 'soft' only feeds crossBorderRules. The ID/UT line is a clean function of longitude (42 deg N from the NV corner to the WY corner), so it expresses exactly. NOTE: no rule below currently reads stateOrProvince — this is here so a future state-gated rule has something to classify against.",
       "field": "stateOrProvince",
       "mode": "soft",
       "north": "ID",
@@ -100,6 +111,16 @@
       "when": { "primaryTagIn": ["sw-id", "boi"] },
       "addTags": ["pnw"],
       "note": "Southwest Idaho dual-carries pnw — the Treasure Valley sits on the eastern Oregon corridor and affiliates with the Pacific Northwest mesh as well as the Intermountain West."
+    }
+  ],
+
+  "optionalTags": [
+    {
+      "_comment": "Operator-selectable overlay tags, shown as checkboxes on the repeater-type step. Each `tag` must exist in `hierarchy`. Never geographic, never auto-applied.",
+      "tag": "erc",
+      "label": "Support ERC Region",
+      "info": "Check to include the 'erc' region, utilized by the Emergency Response Communications program of the Church of Jesus Christ of Latter-day Saints",
+      "default": false
     }
   ],
 

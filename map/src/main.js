@@ -1,7 +1,8 @@
 import {
   HIERARCHY,
   METRO_GROUPS,
-  SEEDS,
+  OPTIONAL_TAGS,
+  REGION_GEOJSON,
   loadRegions,
   ancestryFor,
   resolveLocation,
@@ -11,18 +12,16 @@ import {
   perLineHtml,
   esc,
   colorForTag,
-  haversineKm,
-  classifyPoint,
-  isSeedAllowed,
   META
 } from "../../shared/region-engine.js";
 import { geocode } from "../../shared/geocode.js";
+import { mountOptionalTags } from "../../shared/optional-tags.js";
 
 // Viewport defaults; overridden from META.map after regions load.
-let MAP_CENTER = [46.9, -121.4];
+let MAP_CENTER = [43.0, -113.0];
 let MAP_BOUNDS = [
-  [41.8, -125.6],
-  [50.2, -113.0]
+  [36.8, -117.4],
+  [49.1, -108.9]
 ];
 
 const TYPE_LABELS = {
@@ -46,16 +45,18 @@ const S = {
   repeaterType: "residential",
   firmware: "1.16",
   selectedMetros: [],
+  optionalTags: [],
   resolution: null
 };
 
 const el = {};
-const seedTagSet = new Set();
+const geoTagSet = new Set();
 
 let map;
 let marker = null;
-let voronoiLayer = null;
-let seedLayer = null;
+let regionLayer = null;
+let optTags = null;
+const layerByTag = new Map();
 
 const $ = (id) => document.getElementById(id);
 
@@ -75,105 +76,42 @@ function applyBranding() {
 
 // ── Map layers ────────────────────────────────────────────────────────────
 
-function buildVoronoiCanvas(width, height) {
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  const [[south, west], [north, east]] = MAP_BOUNDS;
-  const img = ctx.createImageData(width, height);
-  const data = img.data;
-  const colorCache = new Map();
+// Depth in the hierarchy — shallower regions draw first so metros sit on top of
+// their sub-region and state backdrops.
+const depthOf = (tag) => ancestryFor(tag).length - 1;
 
-  // Leaflet places this imageOverlay linearly in Web Mercator (the map CRS), not
-  // linearly in latitude. Map each row through the inverse Mercator so features
-  // (and the hard border line) render at their true latitude instead of drifting
-  // north toward the top of the image.
-  const DEG = Math.PI / 180;
-  const mercY = (latDeg) => Math.log(Math.tan(Math.PI / 4 + (latDeg * DEG) / 2));
-  const invMercY = (y) => (2 * Math.atan(Math.exp(y)) - Math.PI / 2) / DEG;
-  const yTop = mercY(north);
-  const yBot = mercY(south);
+const BASE_STYLE = { weight: 1, opacity: 0.55, fillOpacity: 0.12 };
 
-  function rgbForTag(tag) {
-    if (colorCache.has(tag)) return colorCache.get(tag);
-    // colorForTag returns hsl(h,58%,47%); convert to rgb once.
-    const h = Number(colorForTag(tag).match(/hsl\((\d+)/)[1]) / 360;
-    const s = 0.58;
-    const l = 0.47;
-    const hue2rgb = (p, q, t) => {
-      if (t < 0) t += 1;
-      if (t > 1) t -= 1;
-      if (t < 1 / 6) return p + (q - p) * 6 * t;
-      if (t < 1 / 2) return q;
-      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-      return p;
-    };
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    const p = 2 * l - q;
-    const rgb = [
-      Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
-      Math.round(hue2rgb(p, q, h) * 255),
-      Math.round(hue2rgb(p, q, h - 1 / 3) * 255)
-    ];
-    colorCache.set(tag, rgb);
-    return rgb;
-  }
-
-  for (let py = 0; py < height; py += 1) {
-    const lat = invMercY(yTop + ((py + 0.5) / height) * (yBot - yTop));
-    for (let px = 0; px < width; px += 1) {
-      const lon = west + ((px + 0.5) / width) * (east - west);
-      // Hard borders gate which seeds may color a pixel, so e.g. BC regions stop at
-      // the US/Canada line (and US regions don't bleed into BC).
-      const classified = classifyPoint(lat, lon);
-      let bestTag = null;
-      let bestScore = Infinity;
-      for (let i = 0; i < SEEDS.length; i += 1) {
-        const sd = SEEDS[i];
-        if (!isSeedAllowed(sd, classified)) continue;
-        const score = haversineKm(lat, lon, sd.lat, sd.lon) - sd.r;
-        if (score < bestScore) {
-          bestScore = score;
-          bestTag = sd.tag;
-        }
-      }
-      if (bestTag === null) continue;
-      const [r, g, b] = rgbForTag(bestTag);
-      const idx = (py * width + px) * 4;
-      data[idx] = r;
-      data[idx + 1] = g;
-      data[idx + 2] = b;
-      data[idx + 3] = 255;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-  return canvas;
+function styleFor(tag, state) {
+  const color = colorForTag(tag);
+  if (state === "primary") return { color: "#1b4332", weight: 3, opacity: 1,   fillColor: color, fillOpacity: 0.5 };
+  if (state === "carried") return { color: "#b8860b", weight: 2, opacity: 0.9, fillColor: color, fillOpacity: 0.32 };
+  return { color, ...BASE_STYLE, fillColor: color };
 }
 
-function buildVoronoiLayer() {
-  // Render at a higher resolution than the panel so the overlay stays reasonably
-  // crisp when zoomed in. ~456k pixels is a sub-second one-time cost.
-  const canvas = buildVoronoiCanvas(760, 600);
-  return L.imageOverlay(canvas.toDataURL("image/png"), MAP_BOUNDS, {
-    opacity: 0.42,
-    interactive: false
-  });
-}
+// Replaces the upstream canvas Voronoi rasteriser: regions are real polygons now,
+// so Leaflet draws them directly. This also retires the inverse-Mercator correction
+// the raster overlay needed to stop features drifting north.
+function buildRegionLayer() {
+  const extentTag = META.polygons?.extentTag ?? null;
+  const tagProp = META.polygons?.tagProperty ?? "region";
 
-function buildSeedLayer() {
+  const features = (REGION_GEOJSON?.features ?? [])
+    .filter((f) => {
+      const tag = f.properties?.[tagProp];
+      return tag && tag !== extentTag && HIERARCHY[tag];
+    })
+    .sort((a, b) => depthOf(a.properties[tagProp]) - depthOf(b.properties[tagProp]));
+
+  layerByTag.clear();
   const group = L.featureGroup();
-  for (const sd of SEEDS) {
-    const m = L.circleMarker([sd.lat, sd.lon], {
-      radius: 4,
-      color: "#1b4332",
-      weight: 1,
-      fillColor: colorForTag(sd.tag),
-      fillOpacity: 0.9
-    });
-    m.bindTooltip(`${sd.tag} — ${sd.label}`);
-    m._seedTag = sd.tag;
-    m.addTo(group);
+  for (const feature of features) {
+    const tag = feature.properties[tagProp];
+    // interactive:false so clicks fall through to the map's own click handler.
+    const layer = L.geoJSON(feature, { style: styleFor(tag), interactive: false });
+    layer._regionTag = tag;
+    layerByTag.set(tag, layer);
+    layer.addTo(group);
   }
   return group;
 }
@@ -181,34 +119,36 @@ function buildSeedLayer() {
 // ── Highlighting ──────────────────────────────────────────────────────────
 
 function applyHighlight(res) {
+  if (!res || !res.primary) return;
   const rec = currentRecommendation(res);
-  const localTags = new Set(rec.tags.filter((t) => seedTagSet.has(t)));
+  const carried = new Set(rec.tags.filter((t) => geoTagSet.has(t)));
   const primaryTag = res.primary.tag;
 
-  if (seedLayer) {
-    seedLayer.eachLayer((m) => {
-      const isPrimary = m._seedTag === primaryTag;
-      const isLocal = localTags.has(m._seedTag);
-      m.setStyle({
-        radius: isPrimary ? 8 : isLocal ? 6 : 4,
-        color: isLocal ? "#b8860b" : "#1b4332",
-        weight: isPrimary ? 3 : isLocal ? 2 : 1,
-        fillColor: colorForTag(m._seedTag),
-        fillOpacity: 0.95
-      });
-    });
+  for (const [tag, layer] of layerByTag) {
+    const state = tag === primaryTag ? "primary" : carried.has(tag) ? "carried" : null;
+    layer.setStyle(styleFor(tag, state));
+    if (state === "primary") layer.bringToFront();
   }
 }
 
 // ── Recommendation ──────────────────────────────────────────────────────────
 
 function currentRecommendation(res) {
-  return computeRecommendation(res, S.repeaterType, S.selectedMetros);
+  return computeRecommendation(res, S.repeaterType, S.selectedMetros, S.optionalTags);
 }
 
 function recompute() {
   if (S.lat === null || S.lon === null) return;
   S.resolution = resolveLocation(S.lat, S.lon, S.forcePrimaryTag);
+  if (S.resolution.outOfArea) {
+    setStatus(
+      `That point is outside the coverage area (${META.coverage ?? META.name ?? "this region"}).`,
+      "warning"
+    );
+    el.resultSection.classList.add("hidden");
+    el.candidatesSection.classList.add("hidden");
+    return;
+  }
   const rec = currentRecommendation(S.resolution);
   renderResult(S.resolution, rec);
   renderCandidates(S.resolution);
@@ -294,7 +234,7 @@ function renderResult(res, rec) {
 function renderCandidates(res) {
   el.candidateList.innerHTML = res.top5
     .map((entry, i) => {
-      const tag = entry.seed.tag;
+      const tag = entry.tag;
       const selected = tag === res.primary.tag;
       const context = ancestryFor(tag)
         .slice(0, -1)
@@ -303,10 +243,10 @@ function renderCandidates(res) {
       return `<div class="cand-card${selected ? " selected" : ""}" role="button" tabindex="0" data-tag="${tag}">
         <div class="cand-rank">${i + 1}</div>
         <div class="cand-info">
-          <div class="cand-label">${esc(entry.seed.label)} <code>${tag}</code></div>
+          <div class="cand-label">${esc(entry.label)} <code>${tag}</code></div>
           <div class="cand-sub">${esc(context)}</div>
         </div>
-        <div class="cand-km">~${Math.round(entry.km)} km</div>
+        <div class="cand-km">${entry.inside ? "inside" : `~${Math.round(entry.km)} km`}</div>
       </div>`;
     })
     .join("");
@@ -357,9 +297,9 @@ async function doLocate() {
   el.locateBtn.innerHTML = '<span class="spinner"></span>…';
   setStatus("", "");
   try {
-    const geo = await geocode(value, META.geocoderCountryCodes ?? "us,ca");
+    const geo = await geocode(value, META.geocoderCountryCodes ?? "us");
     const probe = resolveLocation(geo.lat, geo.lon);
-    if (probe.nearestKm > (META.outOfAreaKm ?? 450)) {
+    if (probe.outOfArea) {
       setStatus(
         `That location looks outside the coverage area (${META.coverage ?? META.name ?? "this region"}). Try a city in the region.`,
         "warning"
@@ -388,7 +328,7 @@ function syncSegButtons(container, attr, value) {
 }
 
 function buildMetroSection() {
-  const preselected = new Set((S.resolution?.top5 ?? []).slice(0, 2).map((e) => e.seed.tag));
+  const preselected = new Set((S.resolution?.top5 ?? []).slice(0, 2).map((e) => e.tag));
   el.metroGroups.innerHTML = METRO_GROUPS.map(
     (group) => `
     <div class="metro-group">
@@ -412,6 +352,18 @@ function buildMetroSection() {
 }
 
 function wireControls() {
+  optTags = mountOptionalTags({
+    container: el.optTags,
+    defs: OPTIONAL_TAGS,
+    hierarchy: HIERARCHY,
+    divider: false,
+    onChange: (tags) => {
+      S.optionalTags = tags;
+      recompute();
+    }
+  });
+  if (optTags.count > 0) el.optTags.classList.remove("hidden");
+
   el.locateBtn.addEventListener("click", doLocate);
   el.locInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") doLocate();
@@ -470,6 +422,7 @@ async function init() {
     typeCards: $("typeCards"),
     multiMetroSection: $("multiMetroSection"),
     metroGroups: $("metroGroups"),
+    optTags: $("optTags"),
     firmwareGroup: $("firmwareGroup"),
     resultSection: $("resultSection"),
     resultContent: $("resultContent"),
@@ -478,7 +431,11 @@ async function init() {
   });
 
   await loadRegions();
-  for (const sd of SEEDS) seedTagSet.add(sd.tag);
+  const tagProp = META.polygons?.tagProperty ?? "region";
+  for (const f of REGION_GEOJSON?.features ?? []) {
+    const tag = f.properties?.[tagProp];
+    if (tag) geoTagSet.add(tag);
+  }
   if (META.map?.center) MAP_CENTER = META.map.center;
   if (META.map?.bounds) MAP_BOUNDS = META.map.bounds;
   applyBranding();
@@ -492,8 +449,7 @@ async function init() {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   }).addTo(map);
 
-  voronoiLayer = buildVoronoiLayer().addTo(map);
-  seedLayer = buildSeedLayer().addTo(map);
+  regionLayer = buildRegionLayer().addTo(map);
   wireControls();
 
   map.on("click", (event) => {

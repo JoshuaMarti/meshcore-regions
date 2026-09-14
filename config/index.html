@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MeshCore Region Config — Pacific Northwest</title>
+  <title>MeshCore Region Config — Intermountain West</title>
   <style>
     :root {
       --green:       #2d6a4f;
@@ -539,7 +539,7 @@
 <body>
 
 <header>
-  <div class="badge" id="brandBadge">🌲 Pacific Northwest MeshCore</div>
+  <div class="badge" id="brandBadge">🏔️ Intermountain West MeshCore</div>
   <h1>Region Config Generator</h1>
   <p>Enter your location and repeater type to get ready-to-paste CLI commands.</p>
 </header>
@@ -561,12 +561,12 @@
 
     <!-- Input form -->
     <div id="loc-form">
-      <p class="hint">Enter a city, town, neighbourhood, or ZIP / postal code.</p>
+      <p class="hint">Enter a city, town, neighborhood, or ZIP code.</p>
       <div class="input-row">
         <input
           type="text"
           id="loc-input"
-          placeholder="e.g.  Seattle,  97201,  Bellingham,  V8W 1N6 …"
+          placeholder="e.g.  Idaho Falls,  83440,  Pocatello,  Logan …"
           autocomplete="off"
           spellcheck="false"
           aria-label="Location"
@@ -630,6 +630,9 @@
       <div id="metro-groups"></div>
     </div>
 
+    <!-- Optional overlay tags (erc, …) — see optionalTags in regions.json -->
+    <div id="opt-tags" class="hidden"></div>
+
     <div class="nav-row">
       <button class="btn btn-ghost" id="back-2">← Back</button>
       <button class="btn btn-primary" id="next-2" disabled>Next →</button>
@@ -673,22 +676,24 @@
 </main>
 
 <footer>
-  <span id="brandCoverage">Covers WA · OR · ID · MT · BC</span> &nbsp;·&nbsp;
-  Based on <a id="brandAttribution" href="https://gessaman.com/meshcore/regions/" target="_blank" rel="noopener">PNW MeshCore Regions</a> &nbsp;·&nbsp;
+  <span id="brandCoverage">Covers ID, UT, and surrounding areas</span> &nbsp;·&nbsp;
+  Provided as a free service by the
+  <a href="https://uvars.org" target="_blank" rel="noopener">Upper Valley Amateur Radio Society</a> &nbsp;·&nbsp;
   Geocoding by <a href="https://nominatim.openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap / Nominatim</a>
   &nbsp;·&nbsp;
-  Canadian postal codes via <a href="https://geocoder.ca" target="_blank" rel="noopener">geocoder.ca</a>
+  Based on work by <a id="brandAttribution" href="https://gessaman.com/" target="_blank" rel="noopener">Adam Gessaman</a>
 </footer>
 
 <script type="module">
 "use strict";
 
 import {
-  HIERARCHY, METRO_GROUPS, META,
+  HIERARCHY, METRO_GROUPS, OPTIONAL_TAGS, META,
   loadRegions, ancestryFor, resolveLocation, computeRecommendation,
   buildCommandLines, rawText, perLineHtml, esc
 } from "../shared/region-engine.js";
 import { geocode } from "../shared/geocode.js";
+import { mountOptionalTags } from "../shared/optional-tags.js";
 
 await loadRegions();
 
@@ -717,11 +722,15 @@ const S = {
   candidateTag: null,
   repeaterType: null,
   selectedMetros: [],
+  optionalTags: [],
   firmware: "1.16"
 };
 
+// Controller for the opt-in overlay checkboxes (erc, etc.); created on first use.
+let optTags = null;
+
 function buildMetroSection() {
-  const preselected = new Set((S.resolution?.top5 ?? []).slice(0, 2).map(e => e.seed.tag));
+  const preselected = new Set((S.resolution?.top5 ?? []).slice(0, 2).map(e => e.tag));
   $("metro-groups").innerHTML = METRO_GROUPS.map(group =>
     `<div class="metro-group">
        <div class="metro-group-label">${esc(group.label)}</div>
@@ -891,20 +900,20 @@ function renderResult(res, rec, firmware) {
 function showCandidates(top5) {
   const list = $("candidate-list");
   list.innerHTML = top5.map((entry, i) => {
-    const ancestry = ancestryFor(entry.seed.tag);
+    const ancestry = ancestryFor(entry.tag);
     const context  = ancestry.slice(0, -1).map(t => HIERARCHY[t]?.label ?? t).join(" › ");
     return `<div class="cand-card${i === 0 ? " selected" : ""}"
-                 role="button" tabindex="0" data-tag="${entry.seed.tag}" aria-pressed="${i === 0}">
+                 role="button" tabindex="0" data-tag="${entry.tag}" aria-pressed="${i === 0}">
       <div class="cand-rank">${i + 1}</div>
       <div class="cand-info">
-        <div class="cand-label">${esc(entry.seed.label)} <code>${entry.seed.tag}</code></div>
+        <div class="cand-label">${esc(entry.label)} <code>${entry.tag}</code></div>
         <div class="cand-sub">${esc(context)}</div>
       </div>
-      <div class="cand-km">~${Math.round(entry.km)} km</div>
+      <div class="cand-km">${entry.inside ? "inside" : `~${Math.round(entry.km)} km`}</div>
     </div>`;
   }).join("");
 
-  S.candidateTag = top5[0].seed.tag;
+  S.candidateTag = top5[0].tag;
 
   list.querySelectorAll(".cand-card").forEach(card => {
     const select = () => {
@@ -925,7 +934,7 @@ function showCandidates(top5) {
 
 async function doLocate() {
   const val = $("loc-input").value.trim();
-  if (!val) { setStatus("Please enter a city name or ZIP / postal code.", "error"); return; }
+  if (!val) { setStatus("Please enter a city name or ZIP code.", "error"); return; }
 
   const btn = $("locate-btn");
   btn.disabled = true;
@@ -933,7 +942,7 @@ async function doLocate() {
   setStatus("", "");
 
   try {
-    const geo = await geocode(val, META.geocoderCountryCodes ?? "us,ca");
+    const geo = await geocode(val, META.geocoderCountryCodes ?? "us");
     S.lat              = geo.lat;
     S.lon              = geo.lon;
     S.geocodedName     = geo.name;
@@ -941,7 +950,7 @@ async function doLocate() {
 
     const initial = resolveLocation(geo.lat, geo.lon);
 
-    if (initial.nearestKm > (META.outOfAreaKm ?? 450)) {
+    if (initial.outOfArea) {
       setStatus(
         `This tool covers ${META.coverage ?? META.name ?? "this region"}. ` +
         "That location appears to be outside the covered area — try a city in the region.",
@@ -972,6 +981,17 @@ $("change-location-btn").addEventListener("click", () => {
 
 $("confirm-loc-btn").addEventListener("click", () => {
   S.resolution = resolveLocation(S.lat, S.lon, S.candidateTag);
+  // Overlay tags apply to every repeater type, so mount once on entering step 2
+  // rather than inside the high-site branch.
+  if (!optTags) {
+    optTags = mountOptionalTags({
+      container: $("opt-tags"),
+      defs: OPTIONAL_TAGS,
+      hierarchy: HIERARCHY,
+      onChange: tags => { S.optionalTags = tags; }
+    });
+  }
+  if (optTags.count > 0) show("opt-tags");
   showStep(2);
 });
 
@@ -1016,7 +1036,7 @@ document.querySelectorAll(".fw-btn").forEach(btn => {
 $("back-3").addEventListener("click", () => showStep(2));
 
 $("generate-btn").addEventListener("click", () => {
-  const rec = computeRecommendation(S.resolution, S.repeaterType, S.selectedMetros);
+  const rec = computeRecommendation(S.resolution, S.repeaterType, S.selectedMetros, S.optionalTags);
   showStep("result");
   renderResult(S.resolution, rec, S.firmware);
 });
@@ -1024,11 +1044,13 @@ $("generate-btn").addEventListener("click", () => {
 // ── Reset / edit ──────────────────────────────────────────────────────────────
 
 function resetAll() {
-  Object.assign(S, { geocodedName:"", stateOrProvince:null, lat:null, lon:null, resolution:null, candidateTag:null, repeaterType:null, selectedMetros:[], firmware:"1.16" });
+  Object.assign(S, { geocodedName:"", stateOrProvince:null, lat:null, lon:null, resolution:null, candidateTag:null, repeaterType:null, selectedMetros:[], optionalTags:[], firmware:"1.16" });
   $("loc-input").value = "";
   setStatus("", "");
   hide("candidates"); show("loc-form");
   hide("multi-metro-section");
+  hide("opt-tags");
+  if (optTags) optTags.reset();
   document.querySelectorAll(".type-card").forEach(c => {
     c.classList.remove("selected"); c.setAttribute("aria-pressed","false");
   });

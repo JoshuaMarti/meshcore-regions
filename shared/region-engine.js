@@ -3,33 +3,63 @@
 // ── Shared region engine ───────────────────────────────────────────────────────
 // Single source of resolution + recommendation + command-building logic for both
 // the /config wizard and the /map selector. Data is loaded once from /regions.json
-// (browser) or injected via setRegions() (Node tests). The exported HIERARCHY /
-// SEEDS / METRO_GROUPS are live bindings — importers see them populate after load.
+// plus the polygon layer in /regions.geo.json (browser), or injected via
+// setRegions()/setPolygons() (Node tests). The exported HIERARCHY / METRO_GROUPS /
+// OPTIONAL_TAGS are live bindings — importers see them populate after load.
+//
+// Forked from Adam Gessaman's Pacific Northwest MeshCore Regions
+// (https://gessaman.com/) with permission. The substantive divergence: region
+// extent is a polygon layer rather than additively-weighted Voronoi seeds, because
+// Intermountain West coverage is valley-constrained and does not approximate well
+// as circles around seed points. See shared/polygon-resolver.js.
+
+import { buildPolygonIndex, resolveByPolygon } from "./polygon-resolver.js";
 
 export let HIERARCHY = {};
-export let SEEDS = [];
 export let METRO_GROUPS = [];
+export let OPTIONAL_TAGS = [];
 export let BORDERS = [];
 export let CROSS_BORDER_RULES = [];
 export let META = {};
 
+// Polygon layer: the raw FeatureCollection (for map rendering) and the flattened
+// index the resolver walks.
+export let REGION_GEOJSON = null;
+export let POLYGON_INDEX = [];
+
 export function setRegions(data) {
   HIERARCHY = data.hierarchy ?? {};
-  SEEDS = data.seeds ?? [];
   METRO_GROUPS = data.metroGroups ?? [];
+  OPTIONAL_TAGS = (data.optionalTags ?? []).filter(o => o && o.tag);
   BORDERS = Array.isArray(data.borders) ? data.borders : [];
   CROSS_BORDER_RULES = data.crossBorderRules ?? [];
   META = data.meta ?? {};
   return data;
 }
 
-export async function loadRegions(url) {
-  // Resolve regions.json relative to this module (repo-root/shared/region-engine.js),
-  // so it works regardless of where the repo is mounted. Callers may override.
+export function setPolygons(geojson) {
+  REGION_GEOJSON = geojson;
+  POLYGON_INDEX = buildPolygonIndex(geojson, {
+    tagProperty: META.polygons?.tagProperty ?? "region"
+  });
+  return geojson;
+}
+
+// Resolve both files relative to this module (repo-root/shared/region-engine.js),
+// so the tools work regardless of where the repo is mounted. Callers may override.
+export async function loadRegions(url, geoUrl) {
   const target = url ?? new URL("../regions.json", import.meta.url);
   const res = await fetch(target);
   if (!res.ok) throw new Error(`Failed to load region data (${target})`);
-  return setRegions(await res.json());
+  const data = setRegions(await res.json());
+
+  const geoFile = META.polygons?.file ?? "regions.geo.json";
+  const geoTarget = geoUrl ?? new URL(`../${geoFile}`, import.meta.url);
+  const geoRes = await fetch(geoTarget);
+  if (!geoRes.ok) throw new Error(`Failed to load region polygons (${geoTarget})`);
+  setPolygons(await geoRes.json());
+
+  return data;
 }
 
 // ── Geo ─────────────────────────────────────────────────────────────────────
@@ -44,7 +74,13 @@ export function haversineKm(aLat, aLon, bLat, bLon) {
 
 // ── Borders ───────────────────────────────────────────────────────────────────
 // Each border is a polyline of [lon, lat] sorted ascending by lon. latAtLon gives
-// the border latitude at a longitude; a point north of it is on the far side.
+// the border latitude at a longitude; a point north of it is on the far side. Note
+// this can only express borders that pass the vertical line test — fine for the
+// ID/UT line at 42°N, impossible for a north-south line like ID/WY.
+//
+// With polygon resolution, borders no longer filter the candidate pool (polygons
+// already encode which side of a line a region covers). They survive as a
+// classifier so crossBorderRules can gate on pointState / pointCountry.
 
 function latAtLon(line, lon) {
   if (!Array.isArray(line) || line.length === 0) return null;
@@ -62,7 +98,7 @@ function latAtLon(line, lon) {
 }
 
 // Classify a point against every configured border, returning a map of
-// { [border.field]: sideValue } (e.g. { country: "US", stateOrProvince: "WA" }).
+// { [border.field]: sideValue } (e.g. { stateOrProvince: "ID" }).
 export function classifyPoint(lat, lon) {
   const out = {};
   for (const b of BORDERS) {
@@ -71,17 +107,6 @@ export function classifyPoint(lat, lon) {
     out[b.field] = lat > ll ? b.north : b.south;
   }
   return out;
-}
-
-// A seed is eligible for a point only if it sits on the same side of every HARD
-// border (e.g. a US point can never take a Canadian seed). Soft borders don't filter.
-export function isSeedAllowed(seed, classified) {
-  for (const b of BORDERS) {
-    if (b.mode !== "hard") continue;
-    const side = classified[b.field];
-    if (side !== undefined && (seed[b.field] ?? null) !== side) return false;
-  }
-  return true;
 }
 
 function ruleMatches(rule, ctx) {
@@ -127,59 +152,97 @@ export function ancestryFor(tag) {
   return chain;
 }
 
-export function rankSeeds(lat, lon) {
-  return SEEDS.map(s => {
-    const km    = haversineKm(lat, lon, s.lat, s.lon);
-    const score = km - s.r;
-    return { seed: s, km, score, inRadius: km <= s.r };
-  }).sort((a, b) => a.score - b.score);
+function entryOut(e) {
+  if (!e) return null;
+  return { tag: e.tag, label: e.label, km: e.km, inside: e.inside,
+           insetKm: e.insetKm, depth: e.depth, ancestry: e.ancestry };
 }
 
+/**
+ * Resolve a point to a region.
+ *
+ * Primary is the deepest polygon containing the point; ties within that depth
+ * (intentional dual-carry overlaps) break by furthest-inside. Everything else
+ * ranks by distance to boundary.
+ *
+ * Returns null-safe fields even when the point is outside the mesh entirely —
+ * check `outOfArea` before reading `primary`.
+ */
 export function resolveLocation(lat, lon, forcePrimaryTag = null) {
-  const ranked = rankSeeds(lat, lon);
-
-  // Hard borders filter the candidate pool to the point's own side (e.g. a US point
-  // may only be served by US seeds — doc: Bellingham carries no bc tags). Soft
-  // borders only feed the crossBorderRules below.
   const classified = classifyPoint(lat, lon);
-  const poolAll = ranked.filter(r => isSeedAllowed(r.seed, classified));
-  const pool = poolAll.length > 0 ? poolAll : ranked;
 
-  const primaryEntry = forcePrimaryTag
-    ? (pool.find(r => r.seed.tag === forcePrimaryTag) ?? pool[0])
-    : pool[0];
-  const secondary = pool.find(r => r.seed.tag !== primaryEntry.seed.tag);
-  const inCount   = pool.filter(r => r.inRadius).length;
-  const overlap   = inCount > 1;
+  const r = resolveByPolygon(lat, lon, POLYGON_INDEX, HIERARCHY, {
+    extentTag: META.polygons?.extentTag ?? "imw",
+    snapKm:    META.snapKm    ?? 50,
+    overlapKm: META.overlapKm ?? 12,
+    topN:      5
+  });
 
-  const top2 = new Set([primaryEntry.seed.tag, secondary?.seed.tag]);
+  const base = {
+    country:         classified.country ?? null,
+    stateOrProvince: classified.stateOrProvince ?? null,
+    outOfArea:       r.outOfArea,
+    snapped:         r.snapped
+  };
 
-  // Data-driven cross-border / dual-carry rules (see crossBorderRules in regions.json).
-  // Some rules are gated on repeaterType, which isn't known yet at this point in the
-  // flow — ruleCtx is kept on the result so computeRecommendation can re-evaluate once
-  // the operator picks a type. extraTags/extraNotes below cover only the type-agnostic
-  // rules, for callers that want a preview before a repeater type is chosen.
-  const ruleCtx = { top2, primary: primaryEntry.seed, classified };
+  if (!r.primary) {
+    return { ...base, nearestKm: null, top5: [], containing: [],
+             primary: null, secondary: null, overlapLikely: false, gapKm: null,
+             extraTags: [], extraNotes: [], ruleCtx: null };
+  }
+
+  // The candidate list only ever offers tags from top5, so an override is
+  // satisfied from there; the next-best peer becomes the new secondary.
+  let primary = r.primary;
+  let secondary = r.secondary;
+  if (forcePrimaryTag) {
+    const forced = r.top5.find(e => e.tag === forcePrimaryTag);
+    if (forced) {
+      primary = forced;
+      secondary = r.top5.find(e => e.tag !== forced.tag) ?? null;
+    }
+  }
+
+  const top2 = new Set([primary.tag, secondary?.tag]);
+
+  // Data-driven cross-border / dual-carry rules (see crossBorderRules in
+  // regions.json). Some rules are gated on repeaterType, which isn't known yet at
+  // this point in the flow — ruleCtx is kept on the result so computeRecommendation
+  // can re-evaluate once the operator picks a type. extraTags/extraNotes below cover
+  // only the type-agnostic rules, for callers wanting a preview before a type is
+  // chosen.
+  //
+  // Under polygon resolution a region has no intrinsic state/country the way a seed
+  // did, so primaryState/primaryCountry fall back to the point's own classification.
+  const ruleCtx = {
+    top2,
+    primary: { tag: primary.tag,
+               stateOrProvince: classified.stateOrProvince ?? null,
+               country: classified.country ?? null },
+    classified
+  };
   const { tags: extraTags, notes: extraNotes } = matchRules(ruleCtx);
 
   return {
-    country:      classified.country ?? null,
-    nearestKm:    pool[0].km,
-    top5:         pool.slice(0, 5),
+    ...base,
+    nearestKm:     primary.km,          // 0 when the point is inside the region
+    top5:          r.top5.map(entryOut),
+    containing:    r.containing.map(entryOut),
     primary: {
-      tag:      primaryEntry.seed.tag,
-      label:    primaryEntry.seed.label,
-      km:       primaryEntry.km,
-      ancestry: ancestryFor(primaryEntry.seed.tag)
+      tag:      primary.tag,
+      label:    primary.label,
+      km:       primary.km,
+      insetKm:  primary.insetKm,
+      ancestry: ancestryFor(primary.tag)
     },
     secondary: secondary ? {
-      tag:      secondary.seed.tag,
-      label:    secondary.seed.label,
+      tag:      secondary.tag,
+      label:    secondary.label,
       km:       secondary.km,
-      ancestry: ancestryFor(secondary.seed.tag)
+      ancestry: ancestryFor(secondary.tag)
     } : null,
-    overlapLikely: overlap,
-    gapKm:         secondary ? Math.abs(primaryEntry.km - secondary.km) : null,
+    overlapLikely: !!secondary && secondary.km <= (META.overlapKm ?? 12),
+    gapKm:         secondary ? secondary.km : null,
     extraTags,
     extraNotes,
     ruleCtx
@@ -200,26 +263,62 @@ export function sharedPrefix(a, b) {
   return out;
 }
 
+// gapKm is now distance to the secondary region's boundary (0 when the point is
+// inside both), so the thresholds are scaled to overlapKm rather than to the PNW's
+// seed-score gaps.
 export function highSiteStrategy(res) {
   if (!res.secondary || !res.overlapLikely) return "single-metro";
   const d = res.gapKm ?? 999;
-  if (d <= 10)  return "dual-metro";
-  if (d >= 28)  return "state-only";
+  const overlapKm = META.overlapKm ?? 12;
+  if (d <= overlapKm / 2) return "dual-metro";
   return "single-metro";
 }
 
-export function computeRecommendation(res, repeaterType, selectedMetros = []) {
+// Two regions are "siblings" when they share a parent. This replaces the upstream
+// `ancestry[3] === pA[3]` check, which hardcoded the PNW's uniform 5-deep tree —
+// at IMW depth, index 3 is the state, so every pair of Idaho regions looked like a
+// boundary pair. Comparing parents is depth-independent and survives re-parenting.
+function isSibling(a, b) {
+  const pa = HIERARCHY[a]?.parent ?? null;
+  const pb = HIERARCHY[b]?.parent ?? null;
+  return pa !== null && pa === pb;
+}
+
+/**
+ * @param {Object}   res            from resolveLocation()
+ * @param {string}   repeaterType   "residential" | "urban" | "high-site"
+ * @param {string[]} selectedMetros high-site metro selection
+ * @param {string[]} optIn          operator-selected overlay tags (see optionalTags)
+ */
+export function computeRecommendation(res, repeaterType, selectedMetros = [], optIn = []) {
+  if (!res || !res.primary) {
+    return { strategy: "single-metro", tags: [], notes: [] };
+  }
+
   const pA   = res.primary.ancestry;
   const pTag = res.primary.tag;
   // Re-evaluate crossBorderRules now that repeaterType is known, so rules gated with
   // `repeaterTypeIn` (e.g. high-site-only good-neighbor tags) are included correctly.
   const { tags: extra, notes: extraNotes } = res.ruleCtx
     ? matchRules({ ...res.ruleCtx, repeaterType })
-    : { tags: res.extraTags, notes: res.extraNotes };
+    : { tags: res.extraTags ?? [], notes: res.extraNotes ?? [] };
 
-  const nearBoundary = res.secondary && res.overlapLikely &&
-    res.secondary.ancestry[3] !== undefined &&
-    res.secondary.ancestry[3] === pA[3];
+  const nearBoundary = !!res.secondary && res.overlapLikely &&
+    isSibling(res.secondary.tag, pTag);
+
+  // Operator-selected overlay tags (e.g. erc). Never geographic, never inferred —
+  // appended after the rule-driven tags so they sort last in the command, and run
+  // through the same unique() and length check as everything else.
+  const applyOptIn = (tags, notes) => {
+    for (const tag of optIn ?? []) {
+      if (!HIERARCHY[tag] || tags.includes(tag)) continue;
+      tags.push(tag);
+      notes.push(
+        `${HIERARCHY[tag].label ?? tag} (${tag}) added at your request — an opt-in ` +
+        `overlay, not part of the geographic hierarchy.`
+      );
+    }
+  };
 
   if (repeaterType === "residential") {
     const tags  = [...pA];
@@ -229,8 +328,10 @@ export function computeRecommendation(res, repeaterType, selectedMetros = []) {
       notes.push(`Boundary overlap detected — dual local carry added (${pTag} + ${res.secondary.tag}).`);
     }
     tags.push(...extra);
+    const all = [...notes, ...extraNotes];
+    applyOptIn(tags, all);
     return { strategy: nearBoundary ? "dual-metro" : "single-metro",
-             tags: unique(tags), notes: [...notes, ...extraNotes] };
+             tags: unique(tags), notes: all };
   }
 
   if (repeaterType === "urban") {
@@ -240,9 +341,12 @@ export function computeRecommendation(res, repeaterType, selectedMetros = []) {
       tags.push(res.secondary.tag);
       notes.push(`Dual-carry added — point is in overlapping coverage (${pTag} + ${res.secondary.tag}).`);
     }
+    const baseLen = pA.length;
     tags.push(...extra);
-    return { strategy: tags.length > pA.length ? "dual-metro" : "single-metro",
-             tags: unique(tags), notes: [...notes, ...extraNotes] };
+    const all = [...notes, ...extraNotes];
+    applyOptIn(tags, all);
+    return { strategy: tags.length > baseLen ? "dual-metro" : "single-metro",
+             tags: unique(tags), notes: all };
   }
 
   if (repeaterType === "high-site") {
@@ -250,16 +354,18 @@ export function computeRecommendation(res, repeaterType, selectedMetros = []) {
     const allTags = [...pA];
     for (const tag of metros) allTags.push(...ancestryFor(tag));
     allTags.push(...extra);
-    const tags = unique(allTags);
-    if (metros.length > 1) {
-      return { strategy: "multi-metro", tags,
-               notes: [`High-site serving ${metros.length} metro areas: ${metros.join(", ")}.`, ...extraNotes] };
-    }
-    return { strategy: "single-metro", tags,
-             notes: ["High-site — single metro affiliation with full ancestry.", ...extraNotes] };
+    const notes = metros.length > 1
+      ? [`High-site serving ${metros.length} areas: ${metros.join(", ")}.`, ...extraNotes]
+      : ["High-site — single metro affiliation with full ancestry.", ...extraNotes];
+    applyOptIn(allTags, notes);
+    return { strategy: metros.length > 1 ? "multi-metro" : "single-metro",
+             tags: unique(allTags), notes };
   }
 
-  return { strategy: "single-metro", tags: unique(pA), notes: [] };
+  const tags = [...pA];
+  const notes = [];
+  applyOptIn(tags, notes);
+  return { strategy: "single-metro", tags: unique(tags), notes };
 }
 
 // ── Command builder ───────────────────────────────────────────────────────────
@@ -268,6 +374,10 @@ export function computeRecommendation(res, repeaterType, selectedMetros = []) {
 // tags must be in root-to-leaf order as produced by unique(ancestryFor(...)).
 // Each token is either "tag" (cursor moves to tag) or "tag|jump" (create tag,
 // then reposition cursor to the named existing region).
+//
+// A root-level tag (parent null) — e.g. the `erc` overlay — emits "*" as its jump
+// target, the same token a missing hierarchy entry would produce, so the cursor
+// returns to the root rather than to a named parent.
 export function buildRegionDefTokens(tags) {
   const tokens = [];
   for (let i = 0; i < tags.length; i++) {
