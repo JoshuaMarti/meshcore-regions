@@ -21,6 +21,8 @@
     "overlapKm": 12,
     "outOfAreaKm": 450,
 
+    "optionalTagsCallout": { "label": "Wide-Area Scopes" },
+
     "geocoderCountryCodes": "us",
     "geocoderContact": "JoshKI7NOX@uvars.org",
     "map": {
@@ -133,7 +135,8 @@
       "info": "There is a risk that enabling this region could lead to congestion in the future, and it may need to be disabled at that time, but it's fine to enable today",
       "default": false,
       "mode": "strip",
-      "showFor": ["high-site"]
+      "showFor": ["high-site"],
+      "highlight": true
     },
     {
       "tag": "us",
@@ -141,7 +144,8 @@
       "info": "There is a risk that enabling this region could lead to congestion in the future, and it may need to be disabled at that time, but it's fine to enable today",
       "default": false,
       "mode": "strip",
-      "showFor": ["high-site"]
+      "showFor": ["high-site"],
+      "highlight": true
     }
   ],
 

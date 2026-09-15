@@ -27,6 +27,27 @@ const CSS = `
 .opt-row { display: flex; align-items: center; gap: 0.5rem; position: relative; }
 .opt-row[hidden] { display: none; }
 .opt-tags-divider[hidden] { display: none; }
+
+/* Highlighted group — wide-area scopes that deserve a second look before
+   they're switched on. Warm/amber to read as "consider this", not "error". */
+.opt-callout {
+  margin: 0.55rem 0 0.9rem;
+  padding: 0.75rem 0.9rem 0.8rem;
+  border: 1.5px solid var(--gold-warm, #f4a261);
+  border-radius: 11px;
+  background: #fffbea;
+}
+.opt-callout[hidden] { display: none; }
+.opt-callout-label {
+  display: block;
+  font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.09em; color: #92400e; margin-bottom: 0.45rem;
+}
+.opt-callout .opt-label { color: #7c3a06; }
+.opt-callout .opt-info-btn { border-color: #e6c893; color: #a16207; background: #fff; }
+.opt-callout .opt-info-btn:hover, .opt-callout .opt-info-btn:focus-visible {
+  border-color: #b45309; color: #92400e;
+}
 .opt-row + .opt-row { margin-top: 0.55rem; }
 .opt-label {
   display: inline-flex; align-items: center; gap: 0.5rem;
@@ -85,9 +106,14 @@ let uid = 0;
  * @param {Object}      o.hierarchy   regions.json `hierarchy`
  * @param {Function}   [o.onChange]   called with the selected tag array
  * @param {boolean}    [o.divider]    draw a top divider (default true)
+ * @param {Object}     [o.callout]    { label } heading for the highlighted group
+ * @param {HTMLElement} [o.calloutContainer] render the highlighted group here
+ *                      instead of inline — lets the callout sit next to the
+ *                      controls it relates to (e.g. above the metro chips) while
+ *                      the plain rows stay where they are
  * @returns {{selected: Function, reset: Function, count: number}}
  */
-export function mountOptionalTags({ container, defs, hierarchy, onChange, divider = true }) {
+export function mountOptionalTags({ container, defs, hierarchy, onChange, divider = true, callout = null, calloutContainer = null }) {
   if (!container) throw new Error("mountOptionalTags: container is required");
   const doc = container.ownerDocument;
   injectStyles(doc);
@@ -97,18 +123,21 @@ export function mountOptionalTags({ container, defs, hierarchy, onChange, divide
   const entries = (defs || []).filter((d) => d && d.tag && hierarchy[d.tag]);
 
   container.classList.add("opt-tags");
+  if (calloutContainer) calloutContainer.classList.add("opt-tags");
+
+  // Both containers are treated as one control for querying and event binding.
+  const roots = [container, calloutContainer].filter(Boolean);
+  const queryAll = (sel) => roots.flatMap((r) => [...r.querySelectorAll(sel)]);
+
   if (!entries.length) {
-    container.innerHTML = "";
-    container.hidden = true;
+    for (const r of roots) { r.innerHTML = ""; r.hidden = true; }
     return { selected: () => [], reset: () => {}, refresh: () => 0, count: 0 };
   }
   container.hidden = false;
 
   const ns = `opt${uid++}`;
-  container.innerHTML =
-    (divider ? '<hr class="opt-tags-divider">' : "") +
-    entries
-      .map((d, i) => {
+
+  const rowHtml = (d, i) => {
         const popId = `${ns}-pop-${i}`;
         const label = d.label || hierarchy[d.tag].label || d.tag;
         // Screen readers get the full region name rather than the checkbox's short
@@ -127,29 +156,49 @@ export function mountOptionalTags({ container, defs, hierarchy, onChange, divide
               ${esc(label)}
             </label>${info}
           </div>`;
-      })
-      .join("");
+  };
 
-  const boxes = () => [...container.querySelectorAll('input[type="checkbox"]')];
+  // Entries flagged `highlight` are pulled into a bordered callout so they read as
+  // a deliberate choice rather than one more checkbox.
+  const plain = entries.filter((d) => !d.highlight);
+  const flagged = entries.filter((d) => d.highlight);
+
+  const calloutHtml = flagged.length
+    ? `<div class="opt-callout">` +
+      (callout && callout.label
+        ? `<span class="opt-callout-label">${esc(callout.label)}</span>`
+        : "") +
+      flagged.map((d) => rowHtml(d, entries.indexOf(d))).join("") +
+      `</div>`
+    : "";
+
+  container.innerHTML =
+    (divider ? '<hr class="opt-tags-divider">' : "") +
+    plain.map((d) => rowHtml(d, entries.indexOf(d))).join("") +
+    (calloutContainer ? "" : calloutHtml);
+
+  if (calloutContainer) calloutContainer.innerHTML = calloutHtml;
+
+  const boxes = () => queryAll('input[type="checkbox"]');
   const rowOf = (box) => box.closest(".opt-row");
   // A hidden row's state is irrelevant to the current repeater type, so it is not
   // reported as selected.
   const selected = () =>
     boxes().filter((b) => b.checked && !rowOf(b).hidden).map((b) => b.value);
 
-  container.addEventListener("change", () => {
-    if (typeof onChange === "function") onChange(selected());
-  });
+  for (const r of roots) {
+    r.addEventListener("change", () => {
+      if (typeof onChange === "function") onChange(selected());
+    });
+  }
 
   // ── Info bubbles ──────────────────────────────────────────────────────────
   const closeAll = () => {
-    container.querySelectorAll(".opt-info-pop").forEach((p) => { p.hidden = true; });
-    container.querySelectorAll(".opt-info-btn").forEach((b) =>
-      b.setAttribute("aria-expanded", "false")
-    );
+    queryAll(".opt-info-pop").forEach((p) => { p.hidden = true; });
+    queryAll(".opt-info-btn").forEach((b) => b.setAttribute("aria-expanded", "false"));
   };
 
-  container.querySelectorAll(".opt-info-btn").forEach((btn) => {
+  queryAll(".opt-info-btn").forEach((btn) => {
     const pop = doc.getElementById(btn.dataset.pop);
     btn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -163,22 +212,34 @@ export function mountOptionalTags({ container, defs, hierarchy, onChange, divide
     });
   });
 
-  container.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAll(); });
-  doc.addEventListener("click", (e) => { if (!container.contains(e.target)) closeAll(); });
+  for (const r of roots) {
+    r.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAll(); });
+  }
+  doc.addEventListener("click", (e) => {
+    if (!roots.some((r) => r.contains(e.target))) closeAll();
+  });
 
   // Show only the rows whose `showFor` includes this repeater type (entries with
   // no showFor are always visible). Checked state survives a refresh.
   const refresh = (repeaterType) => {
     let visible = 0;
-    for (const row of container.querySelectorAll(".opt-row")) {
+    for (const row of queryAll(".opt-row")) {
       const def = entries.find((d) => d.tag === row.dataset.tag);
       const show = !def || !Array.isArray(def.showFor) || def.showFor.includes(repeaterType);
       row.hidden = !show;
       if (show) visible++;
     }
-    const divider = container.querySelector(".opt-tags-divider");
-    if (divider) divider.hidden = visible === 0;
-    container.hidden = visible === 0;
+    const box = queryAll(".opt-callout")[0];
+    if (box) {
+      box.hidden = ![...box.querySelectorAll(".opt-row")].some((r) => !r.hidden);
+    }
+    // The main container's visibility follows its own rows only — the callout may
+    // live elsewhere and hide independently.
+    const plainVisible = [...container.querySelectorAll(".opt-row")].some((r) => !r.hidden);
+    const dividerEl = container.querySelector(".opt-tags-divider");
+    if (dividerEl) dividerEl.hidden = !plainVisible;
+    container.hidden = !plainVisible;
+    if (calloutContainer) calloutContainer.hidden = !box || box.hidden;
     closeAll();
     if (typeof onChange === "function") onChange(selected());
     return visible;

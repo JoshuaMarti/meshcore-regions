@@ -137,7 +137,11 @@ function currentRecommendation(res) {
   return computeRecommendation(res, S.repeaterType, S.selectedMetros, S.optionalTags);
 }
 
-function recompute() {
+// rebuildMetros: the high-site metro chips are seeded from the resolved top5, so
+// they are stale the moment the point moves. Callers that change the LOCATION pass
+// true; the chips' own onchange handler must not, or ticking a box would
+// immediately overwrite the selection with the defaults again.
+function recompute({ rebuildMetros = false } = {}) {
   if (S.lat === null || S.lon === null) return;
   S.resolution = resolveLocation(S.lat, S.lon, S.forcePrimaryTag);
   if (S.resolution.outOfArea) {
@@ -149,6 +153,10 @@ function recompute() {
     el.candidatesSection.classList.add("hidden");
     return;
   }
+  if (rebuildMetros && S.repeaterType === "high-site") {
+    buildMetroSection();   // reseeds S.selectedMetros from the new top5
+  }
+
   const rec = currentRecommendation(S.resolution);
   renderResult(S.resolution, rec);
   renderCandidates(S.resolution);
@@ -282,9 +290,12 @@ function selectPoint(lat, lon, { name = null, state = null, recenter = false } =
   S.stateOrProvince = state;
   S.geocodedName = name ?? "";
   S.forcePrimaryTag = null;
+  // A new point means a new set of nearby regions — the previous high-site
+  // selection refers to metros the operator never chose for this location.
+  S.selectedMetros = [];
   placeMarker(lat, lon);
   if (recenter) map.setView([lat, lon], Math.max(map.getZoom(), 8));
-  recompute();
+  recompute({ rebuildMetros: true });
 }
 
 async function doLocate() {
@@ -356,6 +367,8 @@ function wireControls() {
     container: el.optTags,
     defs: OPTIONAL_TAGS,
     hierarchy: HIERARCHY,
+    callout: META.optionalTagsCallout,
+    calloutContainer: el.optTagsScope,
     divider: false,
     onChange: (tags) => {
       S.optionalTags = tags;
@@ -425,6 +438,7 @@ async function init() {
     multiMetroSection: $("multiMetroSection"),
     metroGroups: $("metroGroups"),
     optTags: $("optTags"),
+    optTagsScope: $("optTagsScope"),
     firmwareGroup: $("firmwareGroup"),
     resultSection: $("resultSection"),
     resultContent: $("resultContent"),

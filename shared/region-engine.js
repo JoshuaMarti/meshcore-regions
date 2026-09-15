@@ -366,8 +366,8 @@ export function computeRecommendation(res, repeaterType, selectedMetros = [], op
     dropped.reverse();
     if (dropped.length) {
       notes.push(
-        `Wide scope${dropped.length > 1 ? "s" : ""} ${dropped.join(", ")} left off to ` +
-        `limit congestion — enable above if this site needs that reach.`
+        `Wide scope${dropped.length > 1 ? "s" : ""} ${dropped.join(", ")} left off. ` +
+        `Consider enabling above if there isn't a current problem with congestion.`
       );
     }
   };

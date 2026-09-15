@@ -627,6 +627,8 @@
       <hr class="metro-divider">
       <div class="metro-section-label">Which metro areas will this repeater serve?</div>
       <div class="metro-section-hint">Check all that apply — pre-selected based on your location.</div>
+      <!-- Wide-area scope toggles render here (see optionalTags highlight) -->
+      <div id="opt-tags-scope"></div>
       <div id="metro-groups"></div>
     </div>
 
@@ -981,6 +983,13 @@ $("change-location-btn").addEventListener("click", () => {
 
 $("confirm-loc-btn").addEventListener("click", () => {
   S.resolution = resolveLocation(S.lat, S.lon, S.candidateTag);
+  // Coming back to step 2 after changing the location: the metro chips were built
+  // against the old resolution, so rebuild them against this one.
+  if (S.repeaterType === "high-site") {
+    S.selectedMetros = [];
+    buildMetroSection();
+    $("next-2").disabled = S.selectedMetros.length === 0;
+  }
   // Overlay tags apply to every repeater type, so mount once on entering step 2
   // rather than inside the high-site branch.
   if (!optTags) {
@@ -988,9 +997,14 @@ $("confirm-loc-btn").addEventListener("click", () => {
       container: $("opt-tags"),
       defs: OPTIONAL_TAGS,
       hierarchy: HIERARCHY,
+      callout: META.optionalTagsCallout,
+      calloutContainer: $("opt-tags-scope"),
       onChange: tags => { S.optionalTags = tags; }
     });
   }
+  // The container carries the page's .hidden class (display:none !important),
+  // which would otherwise mask the module's own hidden attribute.
+  show("opt-tags");
   optTags.refresh(S.repeaterType);
   showStep(2);
 });
