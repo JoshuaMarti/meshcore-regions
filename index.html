@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeshCore - Upper Valley Amateur Radio Society</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            uvarsBlue: '#006eb6',
+            uvarsLight: '#a2daff',
+          }
+        }
+      }
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  <script>
+    if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  </script>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 min-h-screen flex flex-col font-sans" x-data="appData()" x-init="init()">
+
+  <template x-if="banner.title && banner.content">
+    <div class="w-full bg-uvarsLight dark:bg-blue-900 text-blue-900 dark:text-blue-100 text-center py-2 px-4 text-sm font-medium border-b border-blue-200 dark:border-blue-800">
+      <strong x-text="banner.title" class="uppercase tracking-wide"></strong>: <span x-text="banner.content"></span>
+    </div>
+  </template>
+
+  <nav class="bg-uvarsBlue text-white shadow-lg sticky top-0 z-50" x-data="{ open: false }">
+    <div class="max-w-6xl mx-auto px-4">
+      <div class="flex items-center justify-between h-16">
+        <a href="/" class="text-xl font-bold tracking-tight">UVARS <span class="font-light opacity-70">Upper Valley Amateur Radio Society</span></a>
+
+        <div class="hidden sm:flex items-center space-x-6">
+          <template x-for="page in pages" :key="page.path">
+            <a :href="page.path" :class="{ 'bg-white/20 px-3 py-1 rounded-md': currentPath === page.path }" class="text-sm font-medium hover:text-uvarsLight transition-colors">
+              <span x-text="page.name"></span>
+            </a>
+          </template>
+          <button @click="toggleDarkMode" class="p-2 rounded-full hover:bg-white/10 transition">
+            <template x-if="!darkMode">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m8.66-8.66h-1M4.34 12H3m15.36 6.36l-.71-.71M6.34 6.34l-.71-.71m12.02 0l-.71.71M6.34 17.66l-.71.71M12 5a7 7 0 100 14 7 7 0 000-14z" /></svg>
+            </template>
+            <template x-if="darkMode">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z" /></svg>
+            </template>
+          </button>
+        </div>
+
+        <button @click="open = !open" class="sm:hidden p-2 rounded-md hover:bg-white/10">
+          <svg x-show="!open" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
+          <svg x-show="open" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+      </div>
+    </div>
+
+    <div x-show="open" class="sm:hidden bg-uvarsBlue border-t border-white/10 px-4 py-4 space-y-2">
+      <template x-for="page in pages" :key="page.path">
+        <a :href="page.path" class="block px-3 py-2 rounded-md text-base font-medium hover:bg-white/10">
+          <span x-text="page.name"></span>
+        </a>
+      </template>
+    </div>
+  </nav>
+
+  <main class="flex-grow">
+    <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+        <div class="max-w-4xl mx-auto px-6 py-12 text-center">
+            <h1 class="text-4xl sm:text-5xl font-extrabold text-gray-900 dark:text-white mb-4">
+                MeshCore
+            </h1>
+            <!-- TODO: replace with final human-written copy -->
+            <p class="text-lg text-gray-600 dark:text-gray-300 leading-relaxed max-w-2xl mx-auto">
+                Guides and tools for getting on the mesh in Eastern Idaho and beyond.
+            </p>
+        </div>
+    </div>
+
+    <div class="max-w-4xl mx-auto px-6 py-12 space-y-12">
+
+      <!-- ── Getting started ─────────────────────────────────────────────── -->
+      <section>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          <div aria-disabled="true"
+               class="p-6 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 opacity-60 cursor-not-allowed select-none">
+            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-1">Getting Started with your Companion</h3>
+            <span class="block text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-3">Coming Soon</span>
+            <!-- TODO: replace with final human-written copy -->
+            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
+              Setting up a handheld or phone-paired node, and sending your first messages.
+            </p>
+          </div>
+
+          <div aria-disabled="true"
+               class="p-6 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 opacity-60 cursor-not-allowed select-none">
+            <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-1">Getting Started with your Repeater</h3>
+            <span class="block text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-3">Coming Soon</span>
+            <!-- TODO: replace with final human-written copy -->
+            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
+              Siting, powering, and configuring a repeater so it helps the mesh rather than crowding it.
+            </p>
+          </div>
+
+        </div>
+      </section>
+
+      <div class="h-px bg-gray-200 dark:bg-gray-700"></div>
+
+      <!-- ── Regions explainer ───────────────────────────────────────────── -->
+      <section>
+        <div aria-disabled="true"
+             class="p-8 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 opacity-60 cursor-not-allowed select-none">
+          <h3 class="text-2xl font-bold text-gray-900 dark:text-white mb-1">All About Regions</h3>
+          <span class="block text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-3">Coming Soon</span>
+          <!-- TODO: replace with final human-written copy -->
+          <p class="text-lg text-gray-600 dark:text-gray-300 leading-relaxed max-w-2xl">
+            What region tags are, why they keep the mesh from flooding itself, and how to pick the right ones.
+          </p>
+        </div>
+      </section>
+
+      <!-- ── Region tools ────────────────────────────────────────────────── -->
+      <section>
+        <div class="flex items-center space-x-4 mb-6">
+          <h2 class="text-2xl font-bold">Region Tools</h2>
+          <div class="h-px flex-grow bg-gray-200 dark:bg-gray-700"></div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          <a href="./map/"
+             class="block p-6 bg-white dark:bg-gray-800 rounded-2xl shadow-sm hover:shadow-md border border-gray-100 dark:border-gray-700 hover:border-uvarsBlue dark:hover:border-uvarsLight transition-all group">
+            <h3 class="text-xl font-bold text-uvarsBlue dark:text-uvarsLight mb-2">
+              <span aria-hidden="true">🗺️</span> Zone Selector <span class="inline-block group-hover:translate-x-1 transition-transform">&rarr;</span>
+            </h3>
+            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
+              Search an address or click the map to see the region boundaries and get ready-to-paste commands.
+            </p>
+          </a>
+
+          <a href="./config/"
+             class="block p-6 bg-white dark:bg-gray-800 rounded-2xl shadow-sm hover:shadow-md border border-gray-100 dark:border-gray-700 hover:border-uvarsBlue dark:hover:border-uvarsLight transition-all group">
+            <h3 class="text-xl font-bold text-uvarsBlue dark:text-uvarsLight mb-2">
+              <span aria-hidden="true">⚙️</span> Config Generator <span class="inline-block group-hover:translate-x-1 transition-transform">&rarr;</span>
+            </h3>
+            <p class="text-gray-600 dark:text-gray-300 leading-relaxed">
+              A step-by-step wizard: location, repeater type, and firmware version in, commands out.
+            </p>
+          </a>
+
+        </div>
+
+        <p class="mt-6 text-sm text-gray-500 dark:text-gray-400">
+          Covers ID, UT, and surrounding areas.<br />
+          Based on work by
+          <a href="https://gessaman.com/" target="_blank" rel="noopener"
+             class="text-uvarsBlue dark:text-uvarsLight hover:underline">Adam Gessaman</a>,
+          used with permission.
+        </p>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="bg-uvarsBlue text-white py-8">
+    <div class="max-w-4xl mx-auto px-6 text-center">
+        <p class="opacity-80">&copy; <span x-text="new Date().getFullYear()"></span> Upper Valley Amateur Radio Society.</p>
+        <p class="text-xs mt-2 uppercase tracking-widest opacity-50 font-bold"></p>
+    </div>
+  </footer>
+
+  <script>
+    function appData() {
+      return {
+        darkMode: document.documentElement.classList.contains('dark'),
+        currentPath: window.location.pathname,
+        banner: { title: '', content: '' },
+        pages: [],
+        async init() {
+          try {
+            const navResp = await fetch('/assets/pages.json');
+            this.pages = await navResp.json();
+            const bannerResp = await fetch(`/assets/banner.json?t=${Date.now()}`);
+            this.banner = await bannerResp.json();
+          } catch (e) {
+            console.log("JSON files not found yet.");
+          }
+        },
+        toggleDarkMode() {
+          this.darkMode = !this.darkMode;
+          document.documentElement.classList.toggle('dark');
+          localStorage.theme = this.darkMode ? 'dark' : 'light';
+        }
+      }
+    }
+  </script>
+</body>
+</html>

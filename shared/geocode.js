@@ -1,22 +1,13 @@
 "use strict";
 
 // ── Geocoding ───────────────────────────────────────────────────────────────
-// Shared address/postal-code geocoder used by both /config and /map so a typed
-// location resolves to lat/lon + stateOrProvince identically in both tools.
+// Shared address/ZIP geocoder used by both /config and /map so a typed location
+// resolves to lat/lon + state identically in both tools.
+//
+// US-only in this fork. Upstream also handled Canadian postal codes via a
+// geocoder.ca fallback; that path is removed along with the BC regions.
 
-const CA_PROVINCES = {
-  AB: "Alberta", BC: "British Columbia", MB: "Manitoba",
-  NB: "New Brunswick", NL: "Newfoundland and Labrador",
-  NS: "Nova Scotia", NT: "Northwest Territories", NU: "Nunavut",
-  ON: "Ontario", PE: "Prince Edward Island", QC: "Quebec",
-  SK: "Saskatchewan", YT: "Yukon"
-};
-
-export function parseCanadianPostalCode(query) {
-  const compact = query.trim().replace(/[\s-]+/g, "").toUpperCase();
-  if (!/^[A-Z]\d[A-Z]\d[A-Z]\d$/.test(compact)) return null;
-  return { compact, formatted: `${compact.slice(0, 3)} ${compact.slice(3)}` };
-}
+import { META } from "./region-engine.js";
 
 function parseNominatimHit(hit) {
   const parts = hit.display_name.split(",").map(s => s.trim());
@@ -31,8 +22,14 @@ function parseNominatimHit(hit) {
 }
 
 export async function nominatimSearch(params) {
+  // Nominatim's usage policy asks for an identifying contact on every request.
+  // Browsers forbid setting User-Agent from fetch(), so the documented alternative
+  // is the `email` query parameter — set meta.geocoderContact in regions.json.
+  const contact = META.geocoderContact;
   const url = "https://nominatim.openstreetmap.org/search?" + new URLSearchParams({
-    format: "json", limit: "1", addressdetails: "1", ...params
+    format: "json", limit: "1", addressdetails: "1",
+    ...(contact ? { email: contact } : {}),
+    ...params
   });
   const res = await fetch(url, { headers: { "Accept-Language": "en-US,en" } });
   if (!res.ok) throw new Error("Geocoding service error");
@@ -40,34 +37,19 @@ export async function nominatimSearch(params) {
   return data.length ? parseNominatimHit(data[0]) : null;
 }
 
-export async function geocodeCanadianPostal({ compact, formatted }) {
-  const fromPostal = await nominatimSearch({ postalcode: formatted, country: "ca" });
-  if (fromPostal) return fromPostal;
-
-  const fromQuery = await nominatimSearch({ q: formatted, countrycodes: "ca" });
-  if (fromQuery) return fromQuery;
-
-  const res = await fetch(`https://geocoder.ca/?locate=${encodeURIComponent(compact)}&json=1`);
-  if (!res.ok) throw new Error("Geocoding service error");
-  const data = await res.json();
-  const lat = parseFloat(data.latt);
-  const lon = parseFloat(data.longt);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-    throw new Error("No matching location found");
-  }
-  const city     = data.standard?.city;
-  const provAbbr = data.standard?.prov;
-  const provName = provAbbr ? (CA_PROVINCES[provAbbr] ?? provAbbr) : null;
-  return {
-    lat, lon,
-    name: [formatted, city, provName].filter(Boolean).join(", "),
-    stateOrProvince: provName
-  };
+// A bare 5-digit ZIP is ambiguous as free text (Nominatim often returns a street
+// number), so route it through the postalcode field first.
+function parseUsZip(query) {
+  const m = query.trim().match(/^(\d{5})(?:-\d{4})?$/);
+  return m ? m[1] : null;
 }
 
-export async function geocode(query, countryCodes = "us,ca") {
-  const caPostal = parseCanadianPostalCode(query);
-  if (caPostal) return geocodeCanadianPostal(caPostal);
+export async function geocode(query, countryCodes = "us") {
+  const zip = parseUsZip(query);
+  if (zip) {
+    const fromZip = await nominatimSearch({ postalcode: zip, countrycodes: countryCodes });
+    if (fromZip) return fromZip;
+  }
 
   const hit = await nominatimSearch({ q: query, countrycodes: countryCodes });
   if (hit) return hit;

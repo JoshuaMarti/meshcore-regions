@@ -158,7 +158,7 @@ function recompute() {
 }
 
 function renderResult(res, rec) {
-  const lines = buildCommandLines(rec.tags, S.firmware);
+  const lines = buildCommandLines(rec.tags, S.firmware, rec.defaultTag);
 
   const locName = S.geocodedName || `${S.lat.toFixed(4)}, ${S.lon.toFixed(4)}`;
   const locHtml = `
@@ -362,7 +362,8 @@ function wireControls() {
       recompute();
     }
   });
-  if (optTags.count > 0) el.optTags.classList.remove("hidden");
+  el.optTags.classList.remove("hidden");   // visibility is driven by refresh()
+  optTags.refresh(S.repeaterType);
 
   el.locateBtn.addEventListener("click", doLocate);
   el.locInput.addEventListener("keydown", (e) => {
@@ -378,6 +379,7 @@ function wireControls() {
       card.classList.add("selected");
       card.setAttribute("aria-pressed", "true");
       S.repeaterType = card.dataset.type;
+      if (optTags) optTags.refresh(S.repeaterType);
       if (S.repeaterType === "high-site") {
         buildMetroSection();
         el.multiMetroSection.classList.remove("hidden");

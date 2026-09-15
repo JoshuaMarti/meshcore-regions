@@ -32,7 +32,8 @@ const fixtures = [
     name: "Idaho Falls ID",
     lat: 43.4917, lon: -112.0339,
     repeaterType: "residential",
-    expectedTags: ["us", "west", "imw", "id", "e-id", "ida"]
+    expectedTags: ["us", "west", "imw", "id", "e-id", "ida"],
+    expectedDefault: "e-id"
   },
   {
     name: "Rexburg ID (inside the ida backstop)",
@@ -73,10 +74,23 @@ const fixtures = [
     expectedContainsTags: ["e-id", "pih", "ida"]
   },
   {
-    name: "Salmon ID (smn/lws overlap — NOT siblings, no dual-carry)",
+    name: "Salmon ID (now under c-id, not e-id)",
     lat: 45.1758, lon: -113.8958,
     repeaterType: "residential",
-    expectedTags: ["us", "west", "imw", "id", "e-id", "smn"]
+    expectedTags: ["us", "west", "imw", "id", "c-id", "smn"]
+  },
+  {
+    name: "McCall ID (myl, inside the c-id/sw-id overlap)",
+    lat: 44.9110, lon: -116.0993,
+    repeaterType: "residential",
+    expectedPrimary: "myl",
+    expectedContainsTags: ["c-id", "myl"]
+  },
+  {
+    name: "Ketchum ID (sun under s-id)",
+    lat: 43.6805, lon: -114.3638,
+    repeaterType: "residential",
+    expectedTags: ["us", "west", "imw", "id", "s-id", "sun"]
   },
 
   // ── Cross-carry rules ─────────────────────────────────────────────────────
@@ -99,7 +113,21 @@ const fixtures = [
     name: "Jackson WY (inside the e-id backstop, not a metro)",
     lat: 43.4799, lon: -110.7624,
     repeaterType: "residential",
-    expectedTags: ["us", "west", "imw", "id", "e-id"]
+    expectedTags: ["us", "west", "imw", "id", "e-id"],
+    expectedDefault: "e-id"
+  },
+  {
+    name: "Elko NV (no sub-state area — default falls back to the state)",
+    lat: 40.8324, lon: -115.7631,
+    repeaterType: "residential",
+    expectedTags: ["us", "west", "imw", "nv"],
+    expectedDefault: "nv"
+  },
+  {
+    name: "Salt Lake City UT default is the sub-state area, not the metro",
+    lat: 40.7608, lon: -111.8910,
+    repeaterType: "residential",
+    expectedDefault: "wf"
   },
   {
     name: "Moab UT (c-ut rural backstop)",
@@ -124,13 +152,45 @@ const fixtures = [
     expectedTags: ["us", "west", "imw", "id", "e-id", "ida"]
   },
 
+  // ── Wide-scope strip toggles (us / west, high-site only) ──────────────────
+  {
+    name: "Idaho Falls high-site drops us + west by default",
+    lat: 43.4917, lon: -112.0339,
+    repeaterType: "high-site",
+    selectedMetros: ["ida"],
+    expectedTags: ["imw", "id", "e-id", "ida"]
+  },
+  {
+    name: "Idaho Falls high-site with west opted in",
+    lat: 43.4917, lon: -112.0339,
+    repeaterType: "high-site",
+    selectedMetros: ["ida"],
+    optIn: ["west"],
+    expectedTags: ["west", "imw", "id", "e-id", "ida"]
+  },
+  {
+    name: "Idaho Falls high-site with both scopes opted in",
+    lat: 43.4917, lon: -112.0339,
+    repeaterType: "high-site",
+    selectedMetros: ["ida"],
+    optIn: ["us", "west"],
+    expectedTags: ["us", "west", "imw", "id", "e-id", "ida"],
+    expectedDefault: "e-id"
+  },
+  {
+    name: "Residential is unaffected by the high-site-only strip",
+    lat: 43.4917, lon: -112.0339,
+    repeaterType: "residential",
+    expectedTags: ["us", "west", "imw", "id", "e-id", "ida"]
+  },
+
   // ── High-site multi-metro ─────────────────────────────────────────────────
   {
     name: "Eastern Idaho high-site serving four metros",
     lat: 43.4917, lon: -112.0339,
     repeaterType: "high-site",
     selectedMetros: ["ida", "pih", "dij", "smn"],
-    expectedContainsTags: ["e-id", "ida", "pih", "dij", "smn"],
+    expectedContainsTags: ["e-id", "ida", "pih", "dij", "c-id", "smn"],
     maxDefLength: 160
   },
   {
@@ -180,7 +240,7 @@ async function main() {
       } else {
         const rec = computeRecommendation(res, f.repeaterType ?? "residential",
                                           f.selectedMetros ?? [], f.optIn ?? []);
-        const def = rawText(buildCommandLines(rec.tags, "1.16")).split("\n")[0];
+        const def = rawText(buildCommandLines(rec.tags, "1.16", rec.defaultTag)).split("\n")[0];
         console.log(
           `${f.name.padEnd(52)} ${res.primary.tag.padEnd(6)} ` +
           `2nd=${String(res.secondary?.tag ?? "-").padEnd(6)} ` +
@@ -218,8 +278,11 @@ async function main() {
     for (const tag of f.expectedMissingTags ?? []) {
       if (rec.tags.includes(tag)) add(`unexpected ${tag} in [${rec.tags.join(", ")}]`);
     }
+    if (f.expectedDefault !== undefined && rec.defaultTag !== f.expectedDefault) {
+      add(`expected default region ${f.expectedDefault}, got ${rec.defaultTag}`);
+    }
     if (f.maxDefLength) {
-      const def = rawText(buildCommandLines(rec.tags, "1.16")).split("\n")[0];
+      const def = rawText(buildCommandLines(rec.tags, "1.16", rec.defaultTag)).split("\n")[0];
       if (def.length > f.maxDefLength) {
         add(`region def is ${def.length} chars, over ${f.maxDefLength}: ${def}`);
       }

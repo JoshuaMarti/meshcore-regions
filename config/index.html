@@ -811,7 +811,7 @@ const TYPE_LABELS = {
 
 function renderResult(res, rec, firmware) {
   const container = $("result-content");
-  const lines     = buildCommandLines(rec.tags, firmware);
+  const lines     = buildCommandLines(rec.tags, firmware, rec.defaultTag);
 
   // Location summary
   const locHtml = `
@@ -991,7 +991,7 @@ $("confirm-loc-btn").addEventListener("click", () => {
       onChange: tags => { S.optionalTags = tags; }
     });
   }
-  if (optTags.count > 0) show("opt-tags");
+  optTags.refresh(S.repeaterType);
   showStep(2);
 });
 
@@ -1004,6 +1004,7 @@ document.querySelectorAll(".type-card").forEach(card => {
     });
     card.classList.add("selected"); card.setAttribute("aria-pressed","true");
     S.repeaterType = card.dataset.type;
+    if (optTags) optTags.refresh(S.repeaterType);
     if (S.repeaterType === "high-site") {
       buildMetroSection();
       show("multi-metro-section");

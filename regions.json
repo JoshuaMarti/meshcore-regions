@@ -44,7 +44,10 @@
     "ida":    { "label": "Idaho Falls",            "parent": "e-id" },
     "pih":    { "label": "Pocatello",              "parent": "e-id" },
     "dij":    { "label": "Driggs / Teton Valley",  "parent": "e-id" },
-    "smn":    { "label": "Lemhi County",           "parent": "e-id" },
+
+    "c-id":   { "label": "Central Idaho",          "parent": "id" },
+    "smn":    { "label": "Lemhi County",           "parent": "c-id" },
+    "myl":    { "label": "McCall",                 "parent": "c-id" },
 
     "n-id":   { "label": "Northern Idaho",         "parent": "id" },
     "lws":    { "label": "Lewiston / Clearwater / Grangeville", "parent": "n-id" },
@@ -52,6 +55,7 @@
 
     "s-id":   { "label": "Southern Idaho",         "parent": "id" },
     "twf":    { "label": "Twin Falls",             "parent": "s-id" },
+    "sun":    { "label": "Sun Valley / Ketchum",   "parent": "s-id" },
 
     "sw-id":  { "label": "Southwest Idaho",        "parent": "id" },
     "boi":    { "label": "Boise",                  "parent": "sw-id" },
@@ -121,13 +125,31 @@
       "label": "Support ERC Region",
       "info": "Check to include the 'erc' region, utilized by the Emergency Response Communications program of the Church of Jesus Christ of Latter-day Saints",
       "default": false
+    },
+    {
+      "_comment": "mode \"strip\" inverts the checkbox: the tag is part of the normal ancestry and is REMOVED unless the operator opts in. showFor limits which repeater types see the row at all.",
+      "tag": "west",
+      "label": "Support West Region",
+      "info": "There is a risk that enabling this region could lead to congestion in the future, and it may need to be disabled at that time, but it's fine to enable today",
+      "default": false,
+      "mode": "strip",
+      "showFor": ["high-site"]
+    },
+    {
+      "tag": "us",
+      "label": "Support US Region",
+      "info": "There is a risk that enabling this region could lead to congestion in the future, and it may need to be disabled at that time, but it's fine to enable today",
+      "default": false,
+      "mode": "strip",
+      "showFor": ["high-site"]
     }
   ],
 
   "metroGroups": [
-    { "label": "Eastern Idaho",   "tags": ["e-id", "ida", "pih", "dij", "smn"] },
+    { "label": "Eastern Idaho",   "tags": ["e-id", "ida", "pih", "dij"] },
+    { "label": "Central Idaho",   "tags": ["c-id", "smn", "myl"] },
     { "label": "Northern Idaho",  "tags": ["n-id", "lws", "cda"] },
-    { "label": "Southern Idaho",  "tags": ["s-id", "twf"] },
+    { "label": "Southern Idaho",  "tags": ["s-id", "twf", "sun"] },
     { "label": "Southwest Idaho", "tags": ["sw-id", "boi"] },
     { "label": "Wasatch Front",   "tags": ["wf", "ogd", "slc", "utc"] },
     { "label": "Other Utah",      "tags": ["wb", "n-ut", "c-ut"] },

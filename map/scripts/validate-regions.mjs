@@ -231,11 +231,24 @@ async function main() {
   }
 
   // Optional (operator-selectable) overlay tags.
+  const TYPES = new Set(["residential", "urban", "high-site"]);
   for (const o of data.optionalTags ?? []) {
     if (!o.tag) continue;  // comment-only entries are fine
     if (!hierarchy[o.tag]) fail(`optionalTags: unknown tag ${o.tag}`);
     if (!o.label) fail(`optionalTags: ${o.tag} has no label`);
-    if (o.default === true) warn(`optionalTags: ${o.tag} defaults to checked — overlays are normally opt-in`);
+    const mode = o.mode ?? "add";
+    if (!["add", "strip"].includes(mode)) fail(`optionalTags: ${o.tag} has invalid mode ${o.mode}`);
+    if (mode === "add" && o.default === true) {
+      warn(`optionalTags: ${o.tag} defaults to checked — overlays are normally opt-in`);
+    }
+    // A strip tag only does something if it is actually in some ancestry, which
+    // means it must be a real (usually non-geographic) parent in the tree.
+    if (mode === "strip" && !Object.keys(hierarchy).some(t => hierarchy[t]?.parent === o.tag)) {
+      warn(`optionalTags: ${o.tag} is mode "strip" but nothing has it as a parent — stripping it will never change a command`);
+    }
+    for (const t of o.showFor ?? []) {
+      if (!TYPES.has(t)) fail(`optionalTags: ${o.tag} showFor has unknown repeater type ${t}`);
+    }
   }
 
   // Borders: well-formed polylines + sane mode/field, sorted ascending by lon.

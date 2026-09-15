@@ -285,6 +285,25 @@ function isSibling(a, b) {
 }
 
 /**
+ * Pick the tag for `region default`: the sub-state area if the point has one
+ * (e-id, c-id, n-ut, s-ut …), otherwise the state (wy, mt …).
+ *
+ * Derived structurally rather than by hardcoded depth, so it survives
+ * re-parenting: states are the children of the extent tag (imw), sub-state areas
+ * are their children. meta.defaultRegionOffset overrides the 2 for a fork whose
+ * tree is shaped differently.
+ */
+export function defaultRegionFor(ancestry) {
+  if (!Array.isArray(ancestry) || ancestry.length === 0) return null;
+  const extentTag = META.polygons?.extentTag ?? null;
+  const offset = META.defaultRegionOffset ?? 2;
+  const i = extentTag ? ancestry.indexOf(extentTag) : -1;
+  if (i === -1) return ancestry[ancestry.length - 1] ?? null;
+  // Prefer the sub-state area; fall back to the state; then to the extent itself.
+  return ancestry[i + offset] ?? ancestry[i + 1] ?? ancestry[i] ?? null;
+}
+
+/**
  * @param {Object}   res            from resolveLocation()
  * @param {string}   repeaterType   "residential" | "urban" | "high-site"
  * @param {string[]} selectedMetros high-site metro selection
@@ -292,11 +311,14 @@ function isSibling(a, b) {
  */
 export function computeRecommendation(res, repeaterType, selectedMetros = [], optIn = []) {
   if (!res || !res.primary) {
-    return { strategy: "single-metro", tags: [], notes: [] };
+    return { strategy: "single-metro", tags: [], notes: [], defaultTag: null };
   }
 
   const pA   = res.primary.ancestry;
   const pTag = res.primary.tag;
+  // Always from the primary's own ancestry, never the flattened tag union — a
+  // high-site spanning two states would otherwise be ambiguous.
+  const defaultTag = defaultRegionFor(pA);
   // Re-evaluate crossBorderRules now that repeaterType is known, so rules gated with
   // `repeaterTypeIn` (e.g. high-site-only good-neighbor tags) are included correctly.
   const { tags: extra, notes: extraNotes } = res.ruleCtx
@@ -310,12 +332,42 @@ export function computeRecommendation(res, repeaterType, selectedMetros = [], op
   // appended after the rule-driven tags so they sort last in the command, and run
   // through the same unique() and length check as everything else.
   const applyOptIn = (tags, notes) => {
+    // mode "add" (the default): an overlay tag the operator asked for.
     for (const tag of optIn ?? []) {
+      const def = OPTIONAL_TAGS.find(d => d.tag === tag);
+      if (def && def.mode === "strip") continue;       // handled below
       if (!HIERARCHY[tag] || tags.includes(tag)) continue;
       tags.push(tag);
       notes.push(
         `${HIERARCHY[tag].label ?? tag} (${tag}) added at your request — an opt-in ` +
         `overlay, not part of the geographic hierarchy.`
+      );
+    }
+
+    // mode "strip": a wide scope that IS part of the normal ancestry but is left
+    // off unless the operator opts in. Applies only to the repeater types listed
+    // in showFor, so a home node is unaffected by a high-site-only toggle.
+    const strip = new Set();
+    for (const def of OPTIONAL_TAGS) {
+      if (def.mode !== "strip") continue;
+      if (Array.isArray(def.showFor) && !def.showFor.includes(repeaterType)) continue;
+      if ((optIn ?? []).includes(def.tag)) continue;
+      strip.add(def.tag);
+    }
+    // Remove EVERY occurrence: a high-site unions the primary ancestry with one
+    // ancestry per selected metro, so a root tag appears several times before
+    // unique() runs.
+    const dropped = [];
+    for (let i = tags.length - 1; i >= 0; i--) {
+      if (!strip.has(tags[i])) continue;
+      if (!dropped.includes(tags[i])) dropped.push(tags[i]);
+      tags.splice(i, 1);
+    }
+    dropped.reverse();
+    if (dropped.length) {
+      notes.push(
+        `Wide scope${dropped.length > 1 ? "s" : ""} ${dropped.join(", ")} left off to ` +
+        `limit congestion — enable above if this site needs that reach.`
       );
     }
   };
@@ -331,7 +383,7 @@ export function computeRecommendation(res, repeaterType, selectedMetros = [], op
     const all = [...notes, ...extraNotes];
     applyOptIn(tags, all);
     return { strategy: nearBoundary ? "dual-metro" : "single-metro",
-             tags: unique(tags), notes: all };
+             tags: unique(tags), notes: all, defaultTag };
   }
 
   if (repeaterType === "urban") {
@@ -346,7 +398,7 @@ export function computeRecommendation(res, repeaterType, selectedMetros = [], op
     const all = [...notes, ...extraNotes];
     applyOptIn(tags, all);
     return { strategy: tags.length > baseLen ? "dual-metro" : "single-metro",
-             tags: unique(tags), notes: all };
+             tags: unique(tags), notes: all, defaultTag };
   }
 
   if (repeaterType === "high-site") {
@@ -359,13 +411,13 @@ export function computeRecommendation(res, repeaterType, selectedMetros = [], op
       : ["High-site — single metro affiliation with full ancestry.", ...extraNotes];
     applyOptIn(allTags, notes);
     return { strategy: metros.length > 1 ? "multi-metro" : "single-metro",
-             tags: unique(allTags), notes };
+             tags: unique(allTags), notes, defaultTag };
   }
 
   const tags = [...pA];
   const notes = [];
   applyOptIn(tags, notes);
-  return { strategy: "single-metro", tags: unique(tags), notes };
+  return { strategy: "single-metro", tags: unique(tags), notes, defaultTag };
 }
 
 // ── Command builder ───────────────────────────────────────────────────────────
@@ -380,12 +432,16 @@ export function computeRecommendation(res, repeaterType, selectedMetros = [], op
 // returns to the root rather than to a named parent.
 export function buildRegionDefTokens(tags) {
   const tokens = [];
+  const present = new Set(tags);
   for (let i = 0; i < tags.length; i++) {
     const tag = tags[i];
     if (i === tags.length - 1) {
       tokens.push(tag);  // last token — no jump needed
     } else {
-      const nextParent = HIERARCHY[tags[i + 1]]?.parent ?? "*";
+      // A parent that was stripped from the list (or is a root) can't be jumped
+      // to — fall back to "*" so the cursor returns to the root instead.
+      const rawParent = HIERARCHY[tags[i + 1]]?.parent ?? null;
+      const nextParent = rawParent && present.has(rawParent) ? rawParent : "*";
       // If the next tag's parent IS this tag, the cursor will naturally land here.
       // Otherwise emit tag|nextParent so the cursor is positioned for the next tag.
       tokens.push(nextParent === tag ? tag : `${tag}|${nextParent}`);
@@ -394,24 +450,36 @@ export function buildRegionDefTokens(tags) {
   return tokens;
 }
 
-export function buildCommandLines(tags, firmware) {
+export function buildCommandLines(tags, firmware, defaultTag = null) {
+  // `region default <tag>` sits between the region definition and `region save`.
+  // Only emitted when the tag is actually being carried — setting a default to a
+  // region the node has no scope for would be meaningless.
+  const dflt = defaultTag && tags.includes(defaultTag)
+    ? [{ type: "default", tag: defaultTag }]
+    : [];
+
   if (firmware === "1.16") {
     const tokens = buildRegionDefTokens(tags);
     const defText = `region def ${tokens.join(" ")}`;
     const lines = [{ type: "def", text: defText, tokens, tooLong: defText.length > 160 }];
+    lines.push(...dflt);
     lines.push({ type: "save" });
     return lines;
   }
 
   const lines = [];
   const added = new Set();
+  const present = new Set(tags);
   for (const tag of tags) {
     if (added.has(tag)) continue;
-    const parent = HIERARCHY[tag]?.parent ?? null;
+    // Same guard as above: never `region put x y` where y isn't being created.
+    const rawParent = HIERARCHY[tag]?.parent ?? null;
+    const parent = rawParent && present.has(rawParent) ? rawParent : null;
     lines.push({ type: "put", tag, parent });
     if (firmware === "1.14") lines.push({ type: "allowf", tag });
     added.add(tag);
   }
+  lines.push(...dflt);
   lines.push({ type: "save" });
   return lines;
 }
@@ -420,7 +488,8 @@ export function rawText(lines) {
   return lines.map(l => {
     if (l.type === "def")    return l.text;
     if (l.type === "put")    return l.parent ? `region put ${l.tag} ${l.parent}` : `region put ${l.tag}`;
-    if (l.type === "allowf") return `region allowf ${l.tag}`;
+    if (l.type === "allowf")  return `region allowf ${l.tag}`;
+    if (l.type === "default")  return `region default ${l.tag}`;
     return "region save";
   }).join("\n");
 }
@@ -446,6 +515,9 @@ export function perLineHtml(lines) {
     } else if (l.type === "allowf") {
       inner = `<span class="c-af">region allowf ${l.tag}</span>`;
       raw   = `region allowf ${l.tag}`;
+    } else if (l.type === "default") {
+      inner = `<span class="c-kw">region default</span> <span class="c-tag">${l.tag}</span>`;
+      raw   = `region default ${l.tag}`;
     } else {
       inner = `<span class="c-save">region save</span>`;
       raw   = "region save";

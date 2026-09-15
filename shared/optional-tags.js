@@ -25,6 +25,8 @@ const CSS = `
 .opt-tags { margin-top: 1.1rem; }
 .opt-tags-divider { border: none; border-top: 1px solid var(--border, #d8e3dc); margin: 1.1rem 0; }
 .opt-row { display: flex; align-items: center; gap: 0.5rem; position: relative; }
+.opt-row[hidden] { display: none; }
+.opt-tags-divider[hidden] { display: none; }
 .opt-row + .opt-row { margin-top: 0.55rem; }
 .opt-label {
   display: inline-flex; align-items: center; gap: 0.5rem;
@@ -98,7 +100,7 @@ export function mountOptionalTags({ container, defs, hierarchy, onChange, divide
   if (!entries.length) {
     container.innerHTML = "";
     container.hidden = true;
-    return { selected: () => [], reset: () => {}, count: 0 };
+    return { selected: () => [], reset: () => {}, refresh: () => 0, count: 0 };
   }
   container.hidden = false;
 
@@ -119,7 +121,7 @@ export function mountOptionalTags({ container, defs, hierarchy, onChange, divide
                      aria-label="About ${esc(infoName)}">i</button>
              <div class="opt-info-pop" id="${popId}" role="note" hidden>${esc(d.info)}</div>`
           : "";
-        return `<div class="opt-row">
+        return `<div class="opt-row" data-tag="${esc(d.tag)}">
             <label class="opt-label">
               <input type="checkbox" value="${esc(d.tag)}"${d.default ? " checked" : ""}>
               ${esc(label)}
@@ -129,7 +131,11 @@ export function mountOptionalTags({ container, defs, hierarchy, onChange, divide
       .join("");
 
   const boxes = () => [...container.querySelectorAll('input[type="checkbox"]')];
-  const selected = () => boxes().filter((b) => b.checked).map((b) => b.value);
+  const rowOf = (box) => box.closest(".opt-row");
+  // A hidden row's state is irrelevant to the current repeater type, so it is not
+  // reported as selected.
+  const selected = () =>
+    boxes().filter((b) => b.checked && !rowOf(b).hidden).map((b) => b.value);
 
   container.addEventListener("change", () => {
     if (typeof onChange === "function") onChange(selected());
@@ -160,6 +166,24 @@ export function mountOptionalTags({ container, defs, hierarchy, onChange, divide
   container.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAll(); });
   doc.addEventListener("click", (e) => { if (!container.contains(e.target)) closeAll(); });
 
+  // Show only the rows whose `showFor` includes this repeater type (entries with
+  // no showFor are always visible). Checked state survives a refresh.
+  const refresh = (repeaterType) => {
+    let visible = 0;
+    for (const row of container.querySelectorAll(".opt-row")) {
+      const def = entries.find((d) => d.tag === row.dataset.tag);
+      const show = !def || !Array.isArray(def.showFor) || def.showFor.includes(repeaterType);
+      row.hidden = !show;
+      if (show) visible++;
+    }
+    const divider = container.querySelector(".opt-tags-divider");
+    if (divider) divider.hidden = visible === 0;
+    container.hidden = visible === 0;
+    closeAll();
+    if (typeof onChange === "function") onChange(selected());
+    return visible;
+  };
+
   const reset = () => {
     boxes().forEach((b) => {
       const def = entries.find((d) => d.tag === b.value);
@@ -171,5 +195,5 @@ export function mountOptionalTags({ container, defs, hierarchy, onChange, divide
 
   if (typeof onChange === "function") onChange(selected());
 
-  return { selected, reset, count: entries.length };
+  return { selected, reset, refresh, count: entries.length };
 }
