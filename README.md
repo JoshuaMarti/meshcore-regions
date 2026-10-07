@@ -1,8 +1,29 @@
 # Intermountain West MeshCore Regions
 
-Region tools for a coordinated tagging scheme on the Intermountain West mesh —
-Idaho and Utah, with coverage reaching into Wyoming, Montana, Nevada, and
-Arizona. Forked with permission from [Adam Gessaman](https://gessaman.com/)'s
+## Important: The Region .json and geo.json are no longer synced to this repository. If you are using a derivative of this and want to keep your regions up to date, pull them from
+- https://uvars.org/meshcore/regions.json
+- https://uvars.org/meshcore/regions.geo.json
+
+## Hosted Tools
+While you're welcome to use the code in this repository to build your own tools, we have a number available.
+- Repeater Region Map
+    - https://uvars.org/meshcore/map/
+- Repeater Regions by Address
+    - https://uvars.org/meshcore/config/
+- Channels for Clients
+    - https://meshchannels.org/channels/
+
+## Feedback
+Feedback is always welcome.
+- For code suggestions, feel free to make a Pull Request or raise an Issue.
+- For region revisions, contact JoshKI7NOX@uvars.org
+
+
+Region tools for a coordinated tagging scheme on the Intermountain West mesh,
+primarily concentrated in Idaho and Utah, but with additional coverage reaching
+into Wyoming, Montana, Nevada, and Arizona.
+
+Forked with permission from [Adam Gessaman](https://gessaman.com/)'s
 Pacific Northwest MeshCore Regions.
 
 Scope is about intent: local traffic stays local, and wider scopes provide reach
@@ -29,7 +50,10 @@ drawn as polygons in GIS and resolved by containment.
 
 ## Running locally
 
-Everything is static — no PHP, no build step. Serve the **repository root** so
+**NOTE: regions.json and regions.geo.json are not regularly updated to this repo. For accurate regions in the Intermountain West,
+pull them from https://uvars.org/meshcore/regions.json and https://uvars.org/meshcore/regions.geo.json**
+
+Everything is static. Serve the repository root so
 both tools can reach `regions.json`, `regions.geo.json`, and `shared/` by
 relative path:
 
@@ -42,8 +66,8 @@ npx http-server -p 8080     # or: python3 -m http.server 8080
 - `http://localhost:8080/map/` — zone map selector
 
 In production this is served by Caddy at `uvars.org/meshcore/`.
-`map/index.html` hardcodes `<base href="/meshcore/map/">` to match — if you
-remount the site at a different path, that is the one line to change.
+`map/index.html` hardcodes `<base href="/meshcore/map/">` to match. If you run this on
+your own, remount the site at a different path, that is the one line to change.
 
 ### Checking your edits
 
